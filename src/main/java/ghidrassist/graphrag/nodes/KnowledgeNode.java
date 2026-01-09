@@ -29,55 +29,56 @@ public class KnowledgeNode {
     // Identity fields
     // ========================================
 
-    private String id;                    // UUID for node
-    private NodeType type;                // STATEMENT, BLOCK, FUNCTION, MODULE, BINARY
-    private Long address;                 // Ghidra address (null for MODULE/BINARY)
-    private String binaryId;              // Program hash
-    private String name;                  // Function/symbol name if applicable
+    private String id; // UUID for node
+    private NodeType type; // STATEMENT, BLOCK, FUNCTION, MODULE, BINARY
+    private Long address; // Ghidra address (null for MODULE/BINARY)
+    private String binaryId; // Program hash
+    private String name; // Function/symbol name if applicable
 
     // ========================================
     // Content fields
     // ========================================
 
-    private String rawContent;            // Decompiled code / assembly / description
-    private String llmSummary;            // Semantic explanation from LLM
-    private float confidence;             // Summary confidence 0.0 - 1.0
+    private String rawContent; // Decompiled code / assembly / description
+    private String llmSummary; // Semantic explanation from LLM
+    private String improvedDecompilation; // Improved decompilation from LLM
+    private float confidence; // Summary confidence 0.0 - 1.0
 
     // ========================================
     // Embedding for vector search
     // ========================================
 
-    private float[] embedding;            // Optional vector embedding
+    private float[] embedding; // Optional vector embedding
 
     // ========================================
     // Security annotations
     // ========================================
 
-    private List<String> securityFlags;   // Vulnerability annotations
+    private List<String> securityFlags; // Vulnerability annotations
 
     // ========================================
     // Reverse Engineering Features
     // ========================================
 
-    private List<String> networkAPIs;     // Network API calls (socket, send, recv, etc.)
-    private List<String> fileIOAPIs;      // File I/O API calls (fopen, fread, fwrite, etc.)
-    private List<String> ipAddresses;     // Detected IP addresses in strings
-    private List<String> urls;            // Detected URLs in strings
-    private List<String> filePaths;       // Detected file paths in strings
-    private List<String> domains;         // Detected domain names in strings
-    private List<String> registryKeys;    // Detected registry keys in strings
-    private String activityProfile;       // Computed activity profile (NETWORK_CLIENT, FILE_WRITER, etc.)
-    private String riskLevel;             // Computed risk level (LOW, MEDIUM, HIGH)
+    private List<String> networkAPIs; // Network API calls (socket, send, recv, etc.)
+    private List<String> fileIOAPIs; // File I/O API calls (fopen, fread, fwrite, etc.)
+    private List<String> ipAddresses; // Detected IP addresses in strings
+    private List<String> urls; // Detected URLs in strings
+    private List<String> filePaths; // Detected file paths in strings
+    private List<String> domains; // Detected domain names in strings
+    private List<String> registryKeys; // Detected registry keys in strings
+    private String activityProfile; // Computed activity profile (NETWORK_CLIENT, FILE_WRITER, etc.)
+    private String riskLevel; // Computed risk level (LOW, MEDIUM, HIGH)
 
     // ========================================
     // Metadata
     // ========================================
 
-    private int analysisDepth;            // How many times this node has been analyzed
+    private int analysisDepth; // How many times this node has been analyzed
     private Instant createdAt;
     private Instant updatedAt;
-    private boolean isStale;              // Needs re-summarization
-    private boolean userEdited;           // Set true when user manually edits llmSummary
+    private boolean isStale; // Needs re-summarization
+    private boolean userEdited; // Set true when user manually edits llmSummary
 
     /**
      * Create a new KnowledgeNode with a generated UUID.
@@ -211,7 +212,8 @@ public class KnowledgeNode {
             return new ArrayList<>();
         }
         try {
-            return OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {});
+            return OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {
+            });
         } catch (JsonProcessingException e) {
             return new ArrayList<>();
         }
@@ -322,6 +324,15 @@ public class KnowledgeNode {
 
     public void setLlmSummary(String llmSummary) {
         this.llmSummary = llmSummary;
+        markUpdated();
+    }
+
+    public String getImprovedDecompilation() {
+        return improvedDecompilation;
+    }
+
+    public void setImprovedDecompilation(String improvedDecompilation) {
+        this.improvedDecompilation = improvedDecompilation;
         markUpdated();
     }
 
@@ -470,9 +481,9 @@ public class KnowledgeNode {
      */
     public boolean hasNetworkActivity() {
         return (networkAPIs != null && !networkAPIs.isEmpty()) ||
-               (ipAddresses != null && !ipAddresses.isEmpty()) ||
-               (urls != null && !urls.isEmpty()) ||
-               (domains != null && !domains.isEmpty());
+                (ipAddresses != null && !ipAddresses.isEmpty()) ||
+                (urls != null && !urls.isEmpty()) ||
+                (domains != null && !domains.isEmpty());
     }
 
     /**
@@ -480,8 +491,8 @@ public class KnowledgeNode {
      */
     public boolean hasFileActivity() {
         return (fileIOAPIs != null && !fileIOAPIs.isEmpty()) ||
-               (filePaths != null && !filePaths.isEmpty()) ||
-               (registryKeys != null && !registryKeys.isEmpty());
+                (filePaths != null && !filePaths.isEmpty()) ||
+                (registryKeys != null && !registryKeys.isEmpty());
     }
 
     /**
@@ -551,7 +562,8 @@ public class KnowledgeNode {
             return new ArrayList<>();
         }
         try {
-            return OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {});
+            return OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {
+            });
         } catch (JsonProcessingException e) {
             return new ArrayList<>();
         }
@@ -581,8 +593,10 @@ public class KnowledgeNode {
 
     @Override
     public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
+        if (this == o)
+            return true;
+        if (o == null || getClass() != o.getClass())
+            return false;
         KnowledgeNode that = (KnowledgeNode) o;
         return Objects.equals(id, that.id);
     }

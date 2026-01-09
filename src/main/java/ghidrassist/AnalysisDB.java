@@ -44,6 +44,7 @@ public class AnalysisDB {
 
         // Additional legacy compatibility checks
         migrateChatMessagesTable();
+        migrateGraphNodesTable();
 
         // Validate Graph-RAG schema integrity
         ensureGraphRagSchema();
@@ -58,6 +59,7 @@ public class AnalysisDB {
                 "name",
                 "raw_content",
                 "llm_summary",
+                "improved_decompilation",
                 "confidence",
                 "embedding",
                 "security_flags",
@@ -74,8 +76,7 @@ public class AnalysisDB {
                 "created_at",
                 "updated_at",
                 "is_stale",
-                "user_edited"
-        );
+                "user_edited");
         List<String> edgeColumns = Arrays.asList(
                 "id",
                 "source_id",
@@ -83,8 +84,7 @@ public class AnalysisDB {
                 "type",
                 "weight",
                 "metadata",
-                "created_at"
-        );
+                "created_at");
         List<String> communityColumns = Arrays.asList(
                 "id",
                 "level",
@@ -95,19 +95,16 @@ public class AnalysisDB {
                 "member_count",
                 "is_stale",
                 "created_at",
-                "updated_at"
-        );
+                "updated_at");
         List<String> memberColumns = Arrays.asList(
                 "community_id",
                 "node_id",
-                "membership_score"
-        );
+                "membership_score");
         List<String> ftsColumns = Arrays.asList(
                 "id",
                 "name",
                 "llm_summary",
-                "security_flags"
-        );
+                "security_flags");
 
         dropGraphNodeTriggers();
 
@@ -165,7 +162,7 @@ public class AnalysisDB {
     private List<String> getTableColumns(String tableName) throws SQLException {
         List<String> columns = new ArrayList<>();
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + tableName + ")")) {
+                ResultSet rs = stmt.executeQuery("PRAGMA table_info(" + tableName + ")")) {
             while (rs.next()) {
                 columns.add(rs.getString("name"));
             }
@@ -278,6 +275,7 @@ public class AnalysisDB {
 
     /**
      * Check if FTS is healthy by running a simple test query.
+     * 
      * @return true if FTS is working
      */
     public boolean isFtsHealthy() {
@@ -296,11 +294,9 @@ public class AnalysisDB {
      */
     public static boolean isFtsCorruptionError(SQLException e) {
         String message = e.getMessage();
-        return message != null && (
-                message.contains("SQLITE_CORRUPT_VTAB") ||
+        return message != null && (message.contains("SQLITE_CORRUPT_VTAB") ||
                 message.contains("vtable constructor failed") ||
-                message.contains("node_fts")
-        );
+                message.contains("node_fts"));
     }
 
     /**
@@ -311,8 +307,8 @@ public class AnalysisDB {
         // First check if table exists
         boolean tableExists = false;
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(
-                 "SELECT name FROM sqlite_master WHERE type='table' AND name='GHChatMessages'")) {
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='GHChatMessages'")) {
             tableExists = rs.next();
         } catch (SQLException e) {
             Msg.error(this, "Failed to check if GHChatMessages table exists: " + e.getMessage());
@@ -327,7 +323,7 @@ public class AnalysisDB {
         // Table exists - get existing columns
         java.util.Set<String> existingColumns = new java.util.HashSet<>();
         try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery("PRAGMA table_info(GHChatMessages)")) {
+                ResultSet rs = stmt.executeQuery("PRAGMA table_info(GHChatMessages)")) {
             while (rs.next()) {
                 existingColumns.add(rs.getString("name").toLowerCase());
             }
@@ -337,21 +333,23 @@ public class AnalysisDB {
         }
 
         // Define columns to add with their definitions
-        // Note: SQLite ALTER TABLE cannot use non-constant defaults like CURRENT_TIMESTAMP
-        // So we add these columns without defaults and handle timestamps in INSERT/UPDATE
+        // Note: SQLite ALTER TABLE cannot use non-constant defaults like
+        // CURRENT_TIMESTAMP
+        // So we add these columns without defaults and handle timestamps in
+        // INSERT/UPDATE
         String[][] columnsToAdd = {
-            {"program_hash", "TEXT"},
-            {"chat_id", "INTEGER"},
-            {"session_id", "INTEGER"},  // For backward compatibility with old databases
-            {"message_order", "INTEGER"},
-            {"sequence_number", "INTEGER"},  // For backward compatibility with old databases
-            {"provider_type", "TEXT"},
-            {"native_message_data", "TEXT"},
-            {"role", "TEXT"},
-            {"content_text", "TEXT"},
-            {"message_type", "TEXT DEFAULT 'standard'"},
-            {"created_at", "TIMESTAMP"},
-            {"updated_at", "TIMESTAMP"}
+                { "program_hash", "TEXT" },
+                { "chat_id", "INTEGER" },
+                { "session_id", "INTEGER" }, // For backward compatibility with old databases
+                { "message_order", "INTEGER" },
+                { "sequence_number", "INTEGER" }, // For backward compatibility with old databases
+                { "provider_type", "TEXT" },
+                { "native_message_data", "TEXT" },
+                { "role", "TEXT" },
+                { "content_text", "TEXT" },
+                { "message_type", "TEXT DEFAULT 'standard'" },
+                { "created_at", "TIMESTAMP" },
+                { "updated_at", "TIMESTAMP" }
         };
 
         // Add only missing columns
@@ -384,12 +382,37 @@ public class AnalysisDB {
         }
     }
 
+    /**
+     * Migrate graph_nodes table - add any missing columns for updated schema.
+     */
+    private void migrateGraphNodesTable() {
+        if (connection == null)
+            return;
+
+        try {
+            if (!tableExists("graph_nodes"))
+                return;
+
+            List<String> existing = getTableColumns("graph_nodes");
+            Set<String> columns = new HashSet<>(existing);
+
+            if (!columns.contains("improved_decompilation")) {
+                Msg.info(this, "Migrating graph_nodes table: adding improved_decompilation column");
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("ALTER TABLE graph_nodes ADD COLUMN improved_decompilation TEXT");
+                }
+            }
+        } catch (SQLException e) {
+            Msg.error(this, "Failed to migrate graph_nodes table: " + e.getMessage());
+        }
+    }
+
     public void upsertAnalysis(String programHash, Address functionAddress, String query, String response) {
         String upsertSQL = "INSERT INTO GHAnalysis (program_hash, function_address, query, response) "
                 + "VALUES (?, ?, ?, ?) "
                 + "ON CONFLICT(program_hash, function_address) "
                 + "DO UPDATE SET query = ?, response = ?, timestamp = CURRENT_TIMESTAMP";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(upsertSQL)) {
             pstmt.setString(1, programHash);
             pstmt.setString(2, functionAddress.toString());
@@ -406,24 +429,24 @@ public class AnalysisDB {
     /**
      * Deletes the analysis entry for the specified program and function
      * 
-     * @param programHash The hash of the program
+     * @param programHash     The hash of the program
      * @param functionAddress The address of the function
      * @return true if an entry was deleted, false otherwise
      */
     public boolean deleteAnalysis(String programHash, Address functionAddress) {
         String deleteSQL = "DELETE FROM GHAnalysis WHERE program_hash = ? AND function_address = ?";
-        
+
         if (programHash == null || functionAddress == null) {
             Msg.error(this, "Cannot delete analysis: programHash or functionAddress is null");
             return false;
         }
-        
+
         Msg.info(this, "Attempting to delete analysis for " + programHash + " at " + functionAddress.toString());
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
             pstmt.setString(1, programHash);
             pstmt.setString(2, functionAddress.toString());
-            
+
             int rowsAffected = pstmt.executeUpdate();
             Msg.info(this, "Delete operation affected " + rowsAffected + " rows");
             return rowsAffected > 0;
@@ -436,18 +459,17 @@ public class AnalysisDB {
     public Analysis getAnalysis(String programHash, Address functionAddress) {
         String selectSQL = "SELECT query, response, timestamp FROM GHAnalysis "
                 + "WHERE program_hash = ? AND function_address = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(selectSQL)) {
             pstmt.setString(1, programHash);
             pstmt.setString(2, functionAddress.toString());
-            
+
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 return new Analysis(
-                    rs.getString("query"),
-                    rs.getString("response"),
-                    rs.getTimestamp("timestamp")
-                );
+                        rs.getString("query"),
+                        rs.getString("response"),
+                        rs.getTimestamp("timestamp"));
             }
         } catch (SQLException e) {
             Msg.showError(this, null, "Database Error", "Failed to retrieve analysis: " + e.getMessage());
@@ -461,12 +483,12 @@ public class AnalysisDB {
             deleteContext(programHash);
             return;
         }
-        
+
         String upsertSQL = "INSERT INTO GHContext (program_hash, system_context) "
                 + "VALUES (?, ?) "
                 + "ON CONFLICT(program_hash) "
                 + "DO UPDATE SET system_context = ?, timestamp = CURRENT_TIMESTAMP";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(upsertSQL)) {
             pstmt.setString(1, programHash);
             pstmt.setString(2, context);
@@ -476,10 +498,10 @@ public class AnalysisDB {
             Msg.showError(this, null, "Database Error", "Failed to store context: " + e.getMessage());
         }
     }
-    
+
     public void deleteContext(String programHash) {
         String deleteSQL = "DELETE FROM GHContext WHERE program_hash = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
             pstmt.setString(1, programHash);
             pstmt.executeUpdate();
@@ -621,16 +643,16 @@ public class AnalysisDB {
     }
 
     // Chat History Methods
-    
+
     public int createChatSession(String programHash, String description, String conversation) {
         String insertSQL = "INSERT INTO GHChatHistory (program_hash, description, conversation) VALUES (?, ?, ?)";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(insertSQL, Statement.RETURN_GENERATED_KEYS)) {
             pstmt.setString(1, programHash);
             pstmt.setString(2, description);
             pstmt.setString(3, conversation);
             pstmt.executeUpdate();
-            
+
             ResultSet rs = pstmt.getGeneratedKeys();
             if (rs.next()) {
                 return rs.getInt(1);
@@ -640,10 +662,10 @@ public class AnalysisDB {
         }
         return -1;
     }
-    
+
     public void updateChatSession(int sessionId, String conversation) {
         String updateSQL = "UPDATE GHChatHistory SET conversation = ?, last_update = CURRENT_TIMESTAMP WHERE id = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
             pstmt.setString(1, conversation);
             pstmt.setInt(2, sessionId);
@@ -652,10 +674,10 @@ public class AnalysisDB {
             Msg.showError(this, null, "Database Error", "Failed to update chat session: " + e.getMessage());
         }
     }
-    
+
     public void updateChatDescription(int sessionId, String description) {
         String updateSQL = "UPDATE GHChatHistory SET description = ? WHERE id = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(updateSQL)) {
             pstmt.setString(1, description);
             pstmt.setInt(2, sessionId);
@@ -664,10 +686,10 @@ public class AnalysisDB {
             Msg.showError(this, null, "Database Error", "Failed to update chat description: " + e.getMessage());
         }
     }
-    
+
     public boolean deleteChatSession(int sessionId) {
         String deleteSQL = "DELETE FROM GHChatHistory WHERE id = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(deleteSQL)) {
             pstmt.setInt(1, sessionId);
             int rowsAffected = pstmt.executeUpdate();
@@ -677,28 +699,27 @@ public class AnalysisDB {
             return false;
         }
     }
-    
+
     public java.util.List<ChatSession> getChatSessions(String programHash) {
         java.util.List<ChatSession> sessions = new java.util.ArrayList<>();
         String selectSQL = "SELECT id, description, last_update FROM GHChatHistory WHERE program_hash = ? ORDER BY last_update DESC";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(selectSQL)) {
             pstmt.setString(1, programHash);
-            
+
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
                 sessions.add(new ChatSession(
-                    rs.getInt("id"),
-                    rs.getString("description"),
-                    rs.getTimestamp("last_update")
-                ));
+                        rs.getInt("id"),
+                        rs.getString("description"),
+                        rs.getTimestamp("last_update")));
             }
         } catch (SQLException e) {
             Msg.showError(this, null, "Database Error", "Failed to retrieve chat sessions: " + e.getMessage());
         }
         return sessions;
     }
-    
+
     public String getChatConversation(int sessionId) {
         String selectSQL = "SELECT conversation FROM GHChatHistory WHERE id = ?";
 
@@ -720,19 +741,19 @@ public class AnalysisDB {
     /**
      * Save a single chat message to the per-message storage.
      *
-     * @param programHash Program hash
-     * @param chatId Chat session ID
-     * @param order Message order in conversation
+     * @param programHash  Program hash
+     * @param chatId       Chat session ID
+     * @param order        Message order in conversation
      * @param providerType Provider type (anthropic/openai/ollama/edited)
-     * @param nativeData JSON with essential tool info
-     * @param role Message role
-     * @param content Message content
-     * @param messageType Message type (standard/tool_call/tool_response/edited)
+     * @param nativeData   JSON with essential tool info
+     * @param role         Message role
+     * @param content      Message content
+     * @param messageType  Message type (standard/tool_call/tool_response/edited)
      * @return Generated message ID, or -1 on failure
      */
     public int saveMessage(String programHash, int chatId, int order,
-                           String providerType, String nativeData,
-                           String role, String content, String messageType) {
+            String providerType, String nativeData,
+            String role, String content, String messageType) {
         // Check if row exists
         String checkSql = "SELECT id FROM GHChatMessages WHERE program_hash = ? AND chat_id = ? AND message_order = ?";
         int existingId = -1;
@@ -776,7 +797,8 @@ public class AnalysisDB {
             }
         } else {
             // Insert new row
-            // Note: session_id and sequence_number included for backward compatibility with old database schemas
+            // Note: session_id and sequence_number included for backward compatibility with
+            // old database schemas
             String insertSql = "INSERT INTO GHChatMessages "
                     + "(program_hash, chat_id, session_id, message_order, sequence_number, provider_type, native_message_data, "
                     + "role, content_text, message_type, created_at, updated_at) "
@@ -784,9 +806,9 @@ public class AnalysisDB {
             try (PreparedStatement pstmt = connection.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS)) {
                 pstmt.setString(1, programHash);
                 pstmt.setInt(2, chatId);
-                pstmt.setInt(3, chatId);  // session_id = chat_id for compatibility
+                pstmt.setInt(3, chatId); // session_id = chat_id for compatibility
                 pstmt.setInt(4, order);
-                pstmt.setInt(5, order);   // sequence_number = message_order for compatibility
+                pstmt.setInt(5, order); // sequence_number = message_order for compatibility
                 pstmt.setString(6, providerType);
                 pstmt.setString(7, nativeData != null ? nativeData : "{}");
                 pstmt.setString(8, role);
@@ -809,7 +831,7 @@ public class AnalysisDB {
      * Get all messages for a chat session.
      *
      * @param programHash Program hash
-     * @param chatId Chat session ID
+     * @param chatId      Chat session ID
      * @return List of PersistedChatMessage objects, ordered by message_order
      */
     public List<PersistedChatMessage> getMessages(String programHash, int chatId) {
@@ -831,8 +853,7 @@ public class AnalysisDB {
                         rs.getString("role"),
                         rs.getString("content_text"),
                         rs.getTimestamp("created_at"),
-                        rs.getInt("message_order")
-                );
+                        rs.getInt("message_order"));
                 msg.setProviderType(rs.getString("provider_type"));
                 msg.setNativeMessageData(rs.getString("native_message_data"));
                 msg.setMessageType(rs.getString("message_type"));
@@ -849,7 +870,7 @@ public class AnalysisDB {
      * Delete all messages for a chat session.
      *
      * @param programHash Program hash
-     * @param chatId Chat session ID
+     * @param chatId      Chat session ID
      * @return Number of messages deleted
      */
     public int deleteMessages(String programHash, int chatId) {
@@ -870,7 +891,7 @@ public class AnalysisDB {
      * Check if a chat session has per-message storage (has been migrated).
      *
      * @param programHash Program hash
-     * @param chatId Chat session ID
+     * @param chatId      Chat session ID
      * @return true if the session has per-message storage
      */
     public boolean hasPerMessageStorage(String programHash, int chatId) {
@@ -894,7 +915,7 @@ public class AnalysisDB {
      * Get the count of messages in a chat session.
      *
      * @param programHash Program hash
-     * @param chatId Chat session ID
+     * @param chatId      Chat session ID
      * @return Number of messages
      */
     public int getMessageCount(String programHash, int chatId) {
@@ -915,6 +936,7 @@ public class AnalysisDB {
 
     /**
      * Get the database connection for use with new chat persistence components.
+     * 
      * @return The database connection
      */
     public Connection getConnection() {
@@ -977,8 +999,8 @@ public class AnalysisDB {
                 + "INNER JOIN graph_nodes n ON e.source_id = n.id WHERE n.binary_id = ?";
 
         try (PreparedStatement nodesStmt = connection.prepareStatement(nodesSql);
-             PreparedStatement staleStmt = connection.prepareStatement(staleSql);
-             PreparedStatement edgesStmt = connection.prepareStatement(edgesSql)) {
+                PreparedStatement staleStmt = connection.prepareStatement(staleSql);
+                PreparedStatement edgesStmt = connection.prepareStatement(edgesSql)) {
 
             nodesStmt.setString(1, programHash);
             staleStmt.setString(1, programHash);
@@ -1050,7 +1072,8 @@ public class AnalysisDB {
                 connection.close();
             }
         } catch (SQLException e) {
-            Msg.showError(this, null, "Database Error", "Failed to close Analysis database connection: " + e.getMessage());
+            Msg.showError(this, null, "Database Error",
+                    "Failed to close Analysis database connection: " + e.getMessage());
         }
     }
 
@@ -1065,11 +1088,19 @@ public class AnalysisDB {
             this.timestamp = timestamp;
         }
 
-        public String getQuery() { return query; }
-        public String getResponse() { return response; }
-        public Timestamp getTimestamp() { return timestamp; }
+        public String getQuery() {
+            return query;
+        }
+
+        public String getResponse() {
+            return response;
+        }
+
+        public Timestamp getTimestamp() {
+            return timestamp;
+        }
     }
-    
+
     public static class ChatSession {
         private final int id;
         private final String description;
@@ -1081,9 +1112,17 @@ public class AnalysisDB {
             this.lastUpdate = lastUpdate;
         }
 
-        public int getId() { return id; }
-        public String getDescription() { return description; }
-        public Timestamp getLastUpdate() { return lastUpdate; }
+        public int getId() {
+            return id;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        public Timestamp getLastUpdate() {
+            return lastUpdate;
+        }
     }
 
     // ReAct Message Storage Methods
@@ -1091,19 +1130,21 @@ public class AnalysisDB {
     /**
      * Save a ReAct message to GHReActMessages table.
      *
-     * @param programHash Program hash
-     * @param sessionId Chat session ID
-     * @param messageOrder Message order in conversation
-     * @param phase Current phase (planning/investigation/reflection/synthesis)
+     * @param programHash     Program hash
+     * @param sessionId       Chat session ID
+     * @param messageOrder    Message order in conversation
+     * @param phase           Current phase
+     *                        (planning/investigation/reflection/synthesis)
      * @param iterationNumber Iteration number (null for planning/synthesis)
-     * @param message ChatMessage to save
+     * @param message         ChatMessage to save
      * @return Generated message ID, or -1 on failure
      */
     public int saveReActMessage(String programHash, int sessionId, int messageOrder,
-                                String phase, Integer iterationNumber,
-                                ghidrassist.apiprovider.ChatMessage message) {
+            String phase, Integer iterationNumber,
+            ghidrassist.apiprovider.ChatMessage message) {
         String sql = "INSERT OR REPLACE INTO GHReActMessages " +
-                "(program_hash, session_id, message_order, phase, iteration_number, role, content_text, native_message_data) " +
+                "(program_hash, session_id, message_order, phase, iteration_number, role, content_text, native_message_data) "
+                +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -1138,18 +1179,19 @@ public class AnalysisDB {
     /**
      * Save a ReAct iteration chunk to GHReActIterationChunks table.
      *
-     * @param programHash Program hash
-     * @param sessionId Chat session ID
-     * @param iterationNumber Iteration number
-     * @param summary Iteration summary from LLM
+     * @param programHash       Program hash
+     * @param sessionId         Chat session ID
+     * @param iterationNumber   Iteration number
+     * @param summary           Iteration summary from LLM
      * @param messageStartIndex Start index in message list
-     * @param messageEndIndex End index in message list
+     * @param messageEndIndex   End index in message list
      * @return Generated chunk ID, or -1 on failure
      */
     public int saveReActIterationChunk(String programHash, int sessionId, int iterationNumber,
-                                       String summary, int messageStartIndex, int messageEndIndex) {
+            String summary, int messageStartIndex, int messageEndIndex) {
         String sql = "INSERT OR REPLACE INTO GHReActIterationChunks " +
-                "(program_hash, session_id, iteration_number, iteration_summary, message_start_index, message_end_index) " +
+                "(program_hash, session_id, iteration_number, iteration_summary, message_start_index, message_end_index) "
+                +
                 "VALUES (?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -1198,7 +1240,7 @@ public class AnalysisDB {
      * Get ReAct messages for a session.
      *
      * @param programHash Program hash
-     * @param sessionId Session ID
+     * @param sessionId   Session ID
      * @return List of messages ordered by message_order
      */
     public List<ghidrassist.apiprovider.ChatMessage> getReActMessages(String programHash, int sessionId) {
@@ -1255,7 +1297,7 @@ public class AnalysisDB {
      * Get ReAct iteration chunks for a session.
      *
      * @param programHash Program hash
-     * @param sessionId Session ID
+     * @param sessionId   Session ID
      * @return List of iteration summaries ordered by iteration number
      */
     public List<String> getReActIterationSummaries(String programHash, int sessionId) {
@@ -1305,10 +1347,11 @@ public class AnalysisDB {
 
     /**
      * Get the maximum iteration number for a ReAct session.
-     * Used to continue iteration numbering across multiple ReAct runs in same session.
+     * Used to continue iteration numbering across multiple ReAct runs in same
+     * session.
      *
      * @param programHash Program hash
-     * @param sessionId Session ID
+     * @param sessionId   Session ID
      * @return Maximum iteration number, or 0 if no iterations exist
      */
     public int getMaxReActIteration(String programHash, int sessionId) {

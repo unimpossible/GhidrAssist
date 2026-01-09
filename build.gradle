@@ -75,6 +75,9 @@ dependencies {
 
 	// JGraphX - Visual graph rendering for Semantic Graph tab
 	implementation 'com.github.vlsi.mxgraph:jgraphx:4.2.2'
+
+	// RSyntaxTextArea - Syntax highlighting text area
+	implementation 'com.fifesoft:rsyntaxtextarea:3.6.1'
 }
 
 // Exclude additional files from the built extension

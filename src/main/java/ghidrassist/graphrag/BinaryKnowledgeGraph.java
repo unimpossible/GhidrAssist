@@ -18,8 +18,10 @@ import java.util.*;
 /**
  * Core storage layer for the Binary Knowledge Graph.
  *
- * Combines SQLite for persistent storage with JGraphT for in-memory graph algorithms.
- * Provides CRUD operations for nodes and edges, graph traversal, and search capabilities.
+ * Combines SQLite for persistent storage with JGraphT for in-memory graph
+ * algorithms.
+ * Provides CRUD operations for nodes and edges, graph traversal, and search
+ * capabilities.
  *
  * Architecture:
  * - SQLite stores all nodes/edges persistently
@@ -134,7 +136,8 @@ public class BinaryKnowledgeGraph {
 
     /**
      * Insert or update a node.
-     * If a node with the same address already exists, updates it instead of creating a duplicate.
+     * If a node with the same address already exists, updates it instead of
+     * creating a duplicate.
      */
     public void upsertNode(KnowledgeNode node) {
         // Check if a node with this address already exists (for FUNCTION, BLOCK types)
@@ -153,14 +156,14 @@ public class BinaryKnowledgeGraph {
      */
     private void upsertNodeInternal(KnowledgeNode node, boolean isRetry) {
         String sql = "INSERT INTO graph_nodes "
-                + "(id, type, address, binary_id, name, raw_content, llm_summary, confidence, "
+                + "(id, type, address, binary_id, name, raw_content, llm_summary, improved_decompilation, confidence, "
                 + "embedding, security_flags, network_apis, file_io_apis, ip_addresses, urls, "
                 + "file_paths, domains, registry_keys, risk_level, activity_profile, analysis_depth, "
                 + "created_at, updated_at, is_stale, user_edited) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 + "ON CONFLICT(id) DO UPDATE SET "
                 + "type = excluded.type, address = excluded.address, name = excluded.name, "
-                + "raw_content = excluded.raw_content, llm_summary = excluded.llm_summary, "
+                + "raw_content = excluded.raw_content, llm_summary = excluded.llm_summary, improved_decompilation = excluded.improved_decompilation, "
                 + "confidence = excluded.confidence, embedding = excluded.embedding, "
                 + "security_flags = excluded.security_flags, "
                 + "network_apis = excluded.network_apis, file_io_apis = excluded.file_io_apis, "
@@ -184,23 +187,24 @@ public class BinaryKnowledgeGraph {
             stmt.setString(5, node.getName());
             stmt.setString(6, node.getRawContent());
             stmt.setString(7, node.getLlmSummary());
-            stmt.setFloat(8, node.getConfidence());
-            stmt.setBytes(9, node.serializeEmbedding());
-            stmt.setString(10, node.serializeSecurityFlags());
-            stmt.setString(11, node.serializeNetworkAPIs());
-            stmt.setString(12, node.serializeFileIOAPIs());
-            stmt.setString(13, node.serializeIPAddresses());
-            stmt.setString(14, node.serializeURLs());
-            stmt.setString(15, node.serializeFilePaths());
-            stmt.setString(16, node.serializeDomains());
-            stmt.setString(17, node.serializeRegistryKeys());
-            stmt.setString(18, node.getRiskLevel());
-            stmt.setString(19, node.getActivityProfile());
-            stmt.setInt(20, node.getAnalysisDepth());
-            stmt.setLong(21, node.getCreatedAt().toEpochMilli());
-            stmt.setLong(22, node.getUpdatedAt().toEpochMilli());
-            stmt.setInt(23, node.isStale() ? 1 : 0);
-            stmt.setInt(24, node.isUserEdited() ? 1 : 0);
+            stmt.setString(8, node.getImprovedDecompilation());
+            stmt.setFloat(9, node.getConfidence());
+            stmt.setBytes(10, node.serializeEmbedding());
+            stmt.setString(11, node.serializeSecurityFlags());
+            stmt.setString(12, node.serializeNetworkAPIs());
+            stmt.setString(13, node.serializeFileIOAPIs());
+            stmt.setString(14, node.serializeIPAddresses());
+            stmt.setString(15, node.serializeURLs());
+            stmt.setString(16, node.serializeFilePaths());
+            stmt.setString(17, node.serializeDomains());
+            stmt.setString(18, node.serializeRegistryKeys());
+            stmt.setString(19, node.getRiskLevel());
+            stmt.setString(20, node.getActivityProfile());
+            stmt.setInt(21, node.getAnalysisDepth());
+            stmt.setLong(22, node.getCreatedAt().toEpochMilli());
+            stmt.setLong(23, node.getUpdatedAt().toEpochMilli());
+            stmt.setInt(24, node.isStale() ? 1 : 0);
+            stmt.setInt(25, node.isUserEdited() ? 1 : 0);
 
             stmt.executeUpdate();
 
@@ -301,7 +305,8 @@ public class BinaryKnowledgeGraph {
 
     /**
      * Remove duplicate edges from the database.
-     * Keeps the oldest edge (by created_at) for each unique (source_id, target_id, type) combination.
+     * Keeps the oldest edge (by created_at) for each unique (source_id, target_id,
+     * type) combination.
      *
      * @return Number of duplicate edges removed
      */
@@ -355,8 +360,7 @@ public class BinaryKnowledgeGraph {
                         rs.getString("target_id"),
                         EdgeType.fromString(rs.getString("type")),
                         rs.getDouble("weight"),
-                        rs.getString("metadata")
-                ));
+                        rs.getString("metadata")));
             }
         } catch (SQLException e) {
             Msg.error(this, "Failed to get edges: " + e.getMessage(), e);
@@ -413,8 +417,7 @@ public class BinaryKnowledgeGraph {
             return neighbors;
         }
 
-        BreadthFirstIterator<String, LabeledEdge> iterator =
-                new BreadthFirstIterator<>(memoryGraph, nodeId);
+        BreadthFirstIterator<String, LabeledEdge> iterator = new BreadthFirstIterator<>(memoryGraph, nodeId);
 
         while (iterator.hasNext()) {
             String vertexId = iterator.next();
@@ -492,7 +495,7 @@ public class BinaryKnowledgeGraph {
     /**
      * Check if a node has any edges of a specific type (outgoing).
      *
-     * @param nodeId The node ID
+     * @param nodeId   The node ID
      * @param edgeType The edge type to check for
      * @return true if the node has at least one edge of this type
      */
@@ -513,7 +516,7 @@ public class BinaryKnowledgeGraph {
     /**
      * Check if a node has any incoming edges of a specific type.
      *
-     * @param nodeId The node ID
+     * @param nodeId   The node ID
      * @param edgeType The edge type to check for
      * @return true if the node has at least one incoming edge of this type
      */
@@ -604,14 +607,16 @@ public class BinaryKnowledgeGraph {
     }
 
     /**
-     * Get nodes that need summarization: either marked stale OR have empty/null summary.
-     * This ensures nodes with failed previous summarization attempts are re-processed.
+     * Get nodes that need summarization: either marked stale OR have empty/null
+     * summary.
+     * This ensures nodes with failed previous summarization attempts are
+     * re-processed.
      */
     public List<KnowledgeNode> getStaleNodes(int limit) {
         List<KnowledgeNode> nodes = new ArrayList<>();
         // Include nodes that are stale OR have no summary (null or empty)
         String sql = "SELECT * FROM graph_nodes WHERE binary_id = ? " +
-                     "AND (is_stale = 1 OR llm_summary IS NULL OR llm_summary = '') LIMIT ?";
+                "AND (is_stale = 1 OR llm_summary IS NULL OR llm_summary = '') LIMIT ?";
 
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, binaryId);
@@ -652,7 +657,7 @@ public class BinaryKnowledgeGraph {
         String deleteCommunities = "DELETE FROM graph_communities WHERE binary_id = ?";
 
         try (PreparedStatement stmt1 = connection.prepareStatement(deleteNodes);
-             PreparedStatement stmt2 = connection.prepareStatement(deleteCommunities)) {
+                PreparedStatement stmt2 = connection.prepareStatement(deleteCommunities)) {
 
             stmt1.setString(1, binaryId);
             stmt2.setString(1, binaryId);
@@ -718,7 +723,8 @@ public class BinaryKnowledgeGraph {
      */
     public void upsertCommunity(ghidrassist.graphrag.community.Community community) {
         String sql = "INSERT OR REPLACE INTO graph_communities " +
-                "(id, level, binary_id, parent_community_id, name, summary, member_count, is_stale, created_at, updated_at) " +
+                "(id, level, binary_id, parent_community_id, name, summary, member_count, is_stale, created_at, updated_at) "
+                +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
@@ -914,8 +920,7 @@ public class BinaryKnowledgeGraph {
                 rs.getInt("member_count"),
                 rs.getInt("is_stale") == 1,
                 rs.getLong("created_at"),
-                rs.getLong("updated_at")
-        );
+                rs.getLong("updated_at"));
     }
 
     // ========================================
@@ -924,7 +929,8 @@ public class BinaryKnowledgeGraph {
 
     /**
      * Reload the in-memory graph from the database.
-     * Call this after bulk operations to ensure memoryGraph is synchronized with DB.
+     * Call this after bulk operations to ensure memoryGraph is synchronized with
+     * DB.
      */
     public void reloadFromDatabase() {
         loadGraphIntoMemory();
@@ -983,8 +989,7 @@ public class BinaryKnowledgeGraph {
         KnowledgeNode node = new KnowledgeNode(
                 rs.getString("id"),
                 type,
-                rs.getString("binary_id")
-        );
+                rs.getString("binary_id"));
 
         long address = rs.getLong("address");
         if (!rs.wasNull()) {
@@ -994,6 +999,11 @@ public class BinaryKnowledgeGraph {
         node.setName(rs.getString("name"));
         node.setRawContent(rs.getString("raw_content"));
         node.setLlmSummary(rs.getString("llm_summary"));
+        try {
+            node.setImprovedDecompilation(rs.getString("improved_decompilation"));
+        } catch (SQLException e) {
+            // Column may not create yet in older schemas
+        }
         node.setConfidence(rs.getFloat("confidence"));
         node.setEmbedding(KnowledgeNode.deserializeEmbedding(rs.getBytes("embedding")));
         node.setSecurityFlags(KnowledgeNode.deserializeSecurityFlags(rs.getString("security_flags")));
@@ -1091,7 +1101,8 @@ public class BinaryKnowledgeGraph {
 
         for (int i = 0; i < words.length; i++) {
             String word = words[i];
-            if (word.isEmpty()) continue;
+            if (word.isEmpty())
+                continue;
 
             // Escape internal quotes by doubling them
             word = word.replace("\"", "\"\"");
@@ -1146,7 +1157,7 @@ public class BinaryKnowledgeGraph {
         private final String metadata;
 
         public GraphEdge(String id, String sourceId, String targetId, EdgeType type,
-                         double weight, String metadata) {
+                double weight, String metadata) {
             this.id = id;
             this.sourceId = sourceId;
             this.targetId = targetId;
@@ -1155,11 +1166,28 @@ public class BinaryKnowledgeGraph {
             this.metadata = metadata;
         }
 
-        public String getId() { return id; }
-        public String getSourceId() { return sourceId; }
-        public String getTargetId() { return targetId; }
-        public EdgeType getType() { return type; }
-        public double getWeight() { return weight; }
-        public String getMetadata() { return metadata; }
+        public String getId() {
+            return id;
+        }
+
+        public String getSourceId() {
+            return sourceId;
+        }
+
+        public String getTargetId() {
+            return targetId;
+        }
+
+        public EdgeType getType() {
+            return type;
+        }
+
+        public double getWeight() {
+            return weight;
+        }
+
+        public String getMetadata() {
+            return metadata;
+        }
     }
 }

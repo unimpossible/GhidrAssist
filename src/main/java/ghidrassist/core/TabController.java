@@ -6,10 +6,10 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.util.ProgramLocation;
 import ghidra.util.Msg;
 import ghidra.util.task.Task;
-import ghidra.util.task.TaskLauncher;
+
 import ghidra.util.task.TaskMonitor;
 import ghidrassist.AnalysisDB;
-import ghidrassist.AnalysisDB.Analysis;
+
 import ghidrassist.GhidrAssistPlugin;
 import ghidrassist.LlmApi;
 import ghidrassist.apiprovider.APIProviderConfig;
@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
  * - UI state updates
  */
 public class TabController {
-    
+
     // Services (business logic)
     private final CodeAnalysisService codeAnalysisService;
     private final QueryService queryService;
@@ -61,11 +61,11 @@ public class TabController {
     private final RAGManagementService ragManagementService;
     private final AnalysisDataService analysisDataService;
     private final FeedbackService feedbackService;
-    
+
     // UI utilities
     private final GhidrAssistPlugin plugin;
     private final MarkdownHelper markdownHelper;
-    
+
     // Shared LLM API instance for cancellation
     private volatile LlmApi currentLlmApi;
 
@@ -74,13 +74,13 @@ public class TabController {
 
     // UI state
     private volatile boolean isQueryRunning;
-    private volatile boolean isCancelling;  // Guard against concurrent operations during cancellation
-    private volatile ReasoningConfig currentReasoningConfig;  // Current reasoning/thinking effort setting
+    private volatile boolean isCancelling; // Guard against concurrent operations during cancellation
+    private volatile ReasoningConfig currentReasoningConfig; // Current reasoning/thinking effort setting
 
     // Streaming performance: debounced HTML rendering
-    private static final int RENDER_INTERVAL_MS = 1000;  // Render markdown every 1 second
+    private static final int RENDER_INTERVAL_MS = 1000; // Render markdown every 1 second
     private final ScheduledExecutorService updateScheduler = Executors.newSingleThreadScheduledExecutor();
-    private volatile ScheduledFuture<?> activeRenderTask;  // Tracked at class level for proper cancellation
+    private volatile ScheduledFuture<?> activeRenderTask; // Tracked at class level for proper cancellation
     private final Object renderLock = new Object();
 
     // Chat edit manager for chunked editing
@@ -93,6 +93,7 @@ public class TabController {
     private RAGManagementTab ragManagementTab;
     private AnalysisOptionsTab analysisOptionsTab;
     private SemanticGraphTab semanticGraphTab;
+    private ImprovedDecompilationTab improvedDecompilationTab;
 
     // Database for semantic graph operations
     private final AnalysisDB analysisDB;
@@ -117,23 +118,42 @@ public class TabController {
     }
 
     // ==== UI Component Registration ====
-    
-    public void setTabs(ExplainTab explainTab, QueryTab queryTab, 
-                       ActionsTab actionsTab, RAGManagementTab ragManagementTab) {
+
+    public void setTabs(ExplainTab explainTab, QueryTab queryTab,
+            ActionsTab actionsTab, RAGManagementTab ragManagementTab) {
         this.explainTab = explainTab;
         this.queryTab = queryTab;
         this.actionsTab = actionsTab;
         this.ragManagementTab = ragManagementTab;
     }
 
-    public void setExplainTab(ExplainTab tab) { this.explainTab = tab; }
+    public void setExplainTab(ExplainTab tab) {
+        this.explainTab = tab;
+    }
+
     public void setQueryTab(QueryTab tab) {
         this.queryTab = tab;
     }
-    public void setActionsTab(ActionsTab tab) { this.actionsTab = tab; }
-    public void setRAGManagementTab(RAGManagementTab tab) { this.ragManagementTab = tab; }
-    public void setAnalysisOptionsTab(AnalysisOptionsTab tab) { this.analysisOptionsTab = tab; }
-    public void setSemanticGraphTab(SemanticGraphTab tab) { this.semanticGraphTab = tab; }
+
+    public void setActionsTab(ActionsTab tab) {
+        this.actionsTab = tab;
+    }
+
+    public void setRAGManagementTab(RAGManagementTab tab) {
+        this.ragManagementTab = tab;
+    }
+
+    public void setAnalysisOptionsTab(AnalysisOptionsTab tab) {
+        this.analysisOptionsTab = tab;
+    }
+
+    public void setSemanticGraphTab(SemanticGraphTab tab) {
+        this.semanticGraphTab = tab;
+    }
+
+    public void setImprovedDecompilationTab(ImprovedDecompilationTab tab) {
+        this.improvedDecompilationTab = tab;
+    }
 
     // ==== Reasoning Configuration ====
 
@@ -215,7 +235,7 @@ public class TabController {
     }
 
     // ==== Code Analysis Operations ====
-    
+
     public void handleExplainFunction() {
         if (isQueryRunning) {
             cancelCurrentOperation();
@@ -230,7 +250,7 @@ public class TabController {
 
         setUIState(true, "Stop", "Processing...");
 
-        Task task = new Task("Explain Function", true, true, true) {
+        Task task = new Task("Explain Function", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) {
                 try {
@@ -255,11 +275,11 @@ public class TabController {
                     }
 
                     // Step 2: Extract security features if not present or incomplete
-                    // Check both security_flags AND network_apis since old data may have flags but no API lists
-                    boolean needsSecurityAnalysis = node != null && (
-                        (node.getSecurityFlags() == null || node.getSecurityFlags().isEmpty()) ||
-                        (node.getNetworkAPIs() == null || node.getNetworkAPIs().isEmpty())
-                    );
+                    // Check both security_flags AND network_apis since old data may have flags but
+                    // no API lists
+                    boolean needsSecurityAnalysis = node != null
+                            && ((node.getSecurityFlags() == null || node.getSecurityFlags().isEmpty()) ||
+                                    (node.getNetworkAPIs() == null || node.getNetworkAPIs().isEmpty()));
                     if (needsSecurityAnalysis) {
                         monitor.setMessage("Analyzing security features...");
                         SecurityFeatureExtractor secExtractor = new SecurityFeatureExtractor(
@@ -280,13 +300,15 @@ public class TabController {
 
                             // Show processing message
                             SwingUtilities.invokeLater(() -> {
-                                explainTab.setExplanationText("<html><body><i>Running semantic analysis...</i></body></html>");
+                                explainTab.setExplanationText(
+                                        "<html><body><i>Running semantic analysis...</i></body></html>");
                             });
 
                             // Create semantic extractor and summarize
                             APIProviderConfig providerConfig = GhidrAssistPlugin.getCurrentProviderConfig();
                             if (providerConfig == null) {
-                                throw new Exception("No LLM provider configured. Please configure an API provider in Analysis Options.");
+                                throw new Exception(
+                                        "No LLM provider configured. Please configure an API provider in Analysis Options.");
                             }
                             SemanticExtractor semanticExtractor = new SemanticExtractor(
                                     providerConfig.createProvider(), graph);
@@ -298,7 +320,8 @@ public class TabController {
                             }
                         }
 
-                        // Step 4: Save node to graph (summarizeNode already upserts, but ensure we save)
+                        // Step 4: Save node to graph (summarizeNode already upserts, but ensure we
+                        // save)
                         graph.upsertNode(node);
 
                         // Step 5: Update display
@@ -319,14 +342,14 @@ public class TabController {
                     cancelActiveRenderTask();
                     SwingUtilities.invokeLater(() -> {
                         Msg.showError(getClass(), explainTab, "Error",
-                            "Failed to explain function: " + e.getMessage());
+                                "Failed to explain function: " + e.getMessage());
                         setUIState(false, "Explain Function", null);
                     });
                 }
             }
         };
 
-        new TaskLauncher(task, plugin.getTool().getToolFrame());
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -349,18 +372,119 @@ public class TabController {
 
         // Update security info panel
         explainTab.updateSecurityInfo(
-            node.getRiskLevel(),
-            node.getActivityProfile(),
-            node.getSecurityFlags(),
-            node.getNetworkAPIs(),
-            node.getFileIOAPIs()
-        );
+                node.getRiskLevel(),
+                node.getActivityProfile(),
+                node.getSecurityFlags(),
+                node.getNetworkAPIs(),
+                node.getFileIOAPIs());
     }
 
     public void handleExplainLine() {
         // Statement/block level semantic analysis is planned for a future release
         Msg.showInfo(getClass(), explainTab, "Coming Soon",
-            "Statement/block level semantic analysis is planned for a future release.");
+                "Statement/block level semantic analysis is planned for a future release.");
+    }
+
+    public void handleImproveDecompilation() {
+        if (isQueryRunning) {
+            cancelCurrentOperation();
+            return;
+        }
+
+        Function currentFunction = plugin.getCurrentFunction();
+        if (currentFunction == null) {
+            Msg.showInfo(getClass(), improvedDecompilationTab, "No Function", "No function at current location.");
+            return;
+        }
+
+        setUIState(true, "Stop", "Improving Decompilation...");
+
+        Task task = new Task("Improve Decompilation", true, true, false) {
+            @Override
+            public void run(TaskMonitor monitor) {
+                try {
+                    String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+                    BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(programHash);
+                    long address = currentFunction.getEntryPoint().getOffset();
+
+                    // Step 1: Check node
+                    KnowledgeNode node = graph.getNodeByAddress(address);
+                    if (node == null) {
+                        // Extract structure if needed
+                        StructureExtractor extractor = new StructureExtractor(
+                                plugin.getCurrentProgram(), graph, monitor);
+                        try {
+                            node = extractor.extractFunction(currentFunction);
+                        } finally {
+                            extractor.dispose();
+                        }
+                    }
+
+                    if (node != null) {
+                        APIProviderConfig providerConfig = GhidrAssistPlugin.getCurrentProviderConfig();
+                        if (providerConfig == null) {
+                            throw new Exception("No LLM provider configured.");
+                        }
+
+                        SemanticExtractor semanticExtractor = new SemanticExtractor(
+                                providerConfig.createProvider(), graph);
+
+                        boolean success = semanticExtractor.improveDecompilation(node);
+
+                        if (success) {
+                            KnowledgeNode finalNode = node;
+                            SwingUtilities.invokeLater(() -> {
+                                updateImprovedDecompilationDisplay(finalNode);
+                                setUIState(false, "Improve Decompilation", null);
+                            });
+                        } else {
+                            throw new Exception("Failed to improve decompilation (empty response or error).");
+                        }
+                    }
+
+                } catch (Exception e) {
+                    SwingUtilities.invokeLater(() -> {
+                        Msg.showError(getClass(), improvedDecompilationTab, "Error",
+                                "Failed to improve decompilation: " + e.getMessage());
+                        setUIState(false, "Improve Decompilation", null);
+                    });
+                }
+            }
+        };
+
+        plugin.getTool().execute(task);
+    }
+
+    public void handleUpdateImprovedDecompilation(String content) {
+        Function currentFunction = plugin.getCurrentFunction();
+        if (currentFunction == null)
+            return;
+
+        try {
+            String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+            BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(programHash);
+            long address = currentFunction.getEntryPoint().getOffset();
+            KnowledgeNode node = graph.getNodeByAddress(address);
+
+            if (node != null) {
+                node.setImprovedDecompilation(content);
+                graph.upsertNode(node);
+            }
+        } catch (Exception e) {
+            Msg.error(this, "Failed to save improved decompilation: " + e.getMessage());
+        }
+    }
+
+    private void updateImprovedDecompilationDisplay(KnowledgeNode node) {
+        if (improvedDecompilationTab == null)
+            return;
+
+        if (node != null && node.getImprovedDecompilation() != null) {
+            improvedDecompilationTab.setCodeText(node.getImprovedDecompilation());
+        } else {
+            improvedDecompilationTab.setCodeText(""); // Clear if no improvement exists
+            handleImproveDecompilation(); // auto-update on click
+        }
     }
 
     // ==== Query Operations ====
@@ -381,7 +505,7 @@ public class TabController {
         // Agentic mode requires MCP tools
         if (useAgentic && !useMCP) {
             Msg.showInfo(getClass(), queryTab, "MCP Required",
-                "Agentic mode requires MCP tools to be enabled.");
+                    "Agentic mode requires MCP tools to be enabled.");
             return;
         }
 
@@ -396,7 +520,7 @@ public class TabController {
     }
 
     private void handleRegularQuery(String query, boolean useRAG, boolean useMCP) {
-        Task task = new Task("Custom Query", true, true, true) {
+        Task task = new Task("Custom Query", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) {
                 try {
@@ -411,7 +535,7 @@ public class TabController {
                 } catch (Exception e) {
                     SwingUtilities.invokeLater(() -> {
                         Msg.showError(getClass(), queryTab, "Error",
-                            "Failed to perform query: " + e.getMessage());
+                                "Failed to perform query: " + e.getMessage());
                         setUIState(false, "Submit", null);
                         currentLlmApi = null; // Clear on error
                     });
@@ -419,7 +543,7 @@ public class TabController {
             }
         };
 
-        new TaskLauncher(task, plugin.getTool().getToolFrame());
+        plugin.getTool().execute(task);
     }
 
     private void handleAgenticQuery(String query) {
@@ -435,17 +559,18 @@ public class TabController {
         final String initialContext;
         ghidra.program.model.listing.Function currentFunction = plugin.getCurrentFunction();
         if (currentFunction != null) {
-            initialContext = ghidrassist.core.CodeUtils.getFunctionCode(currentFunction, ghidra.util.task.TaskMonitor.DUMMY);
+            initialContext = ghidrassist.core.CodeUtils.getFunctionCode(currentFunction,
+                    ghidra.util.task.TaskMonitor.DUMMY);
         } else {
             initialContext = "";
         }
 
-        // Container to hold iteration history so it can be accessed in the final result handler
-        final StringBuilder[] historyContainer = new StringBuilder[]{new StringBuilder()};
+        // Container to hold iteration history so it can be accessed in the final result
+        // handler
+        final StringBuilder[] historyContainer = new StringBuilder[] { new StringBuilder() };
 
         // Initialize MCP servers if needed
-        ghidrassist.mcp2.tools.MCPToolManager toolManager =
-            ghidrassist.mcp2.tools.MCPToolManager.getInstance();
+        ghidrassist.mcp2.tools.MCPToolManager toolManager = ghidrassist.mcp2.tools.MCPToolManager.getInstance();
 
         // NOTE: Program context for semantic tools is now handled via ToolRegistry
         // in ReActOrchestrator. MCPToolManager only handles MCP server tools.
@@ -453,8 +578,8 @@ public class TabController {
         java.util.concurrent.CompletableFuture<Void> initFuture;
         if (!toolManager.isInitialized()) {
             Msg.info(this, "Initializing MCP servers for agentic analysis...");
-            SwingUtilities.invokeLater(() ->
-                queryTab.setResponseText("<html><body>Initializing MCP servers...</body></html>"));
+            SwingUtilities.invokeLater(
+                    () -> queryTab.setResponseText("<html><body>Initializing MCP servers...</body></html>"));
             initFuture = toolManager.initializeServers();
         } else {
             initFuture = java.util.concurrent.CompletableFuture.completedFuture(null);
@@ -463,26 +588,24 @@ public class TabController {
         // Chain the analysis after MCP initialization
         initFuture.thenCompose(v -> {
             // Create ReAct orchestrator with new architecture
-            int maxToolRounds = getMaxToolCalls();  // Load user's max tool calls setting
+            int maxToolRounds = getMaxToolCalls(); // Load user's max tool calls setting
             currentOrchestrator = new ghidrassist.agent.react.ReActOrchestrator(
                     ghidrassist.GhidrAssistPlugin.getCurrentProviderConfig(),
                     plugin,
-                    15,  // maxIterations
-                    8000,  // contextSummaryThreshold
-                    maxToolRounds  // maxToolRounds per iteration
-                );
+                    15, // maxIterations
+                    8000, // contextSummaryThreshold
+                    maxToolRounds // maxToolRounds per iteration
+            );
 
             // Create progress handler for UI updates with todos and findings support
-            ghidrassist.agent.react.ReActProgressHandler progressHandler =
-                createReActProgressHandler(historyContainer);
+            ghidrassist.agent.react.ReActProgressHandler progressHandler = createReActProgressHandler(historyContainer);
 
             // Start analysis asynchronously
             return currentOrchestrator.analyze(
-                query,
-                initialContext,
-                String.valueOf(queryService.getCurrentSessionId()),
-                progressHandler
-            );
+                    query,
+                    initialContext,
+                    String.valueOf(queryService.getCurrentSessionId()),
+                    progressHandler);
         }).thenAccept(result -> {
             // Display result on EDT
             SwingUtilities.invokeLater(() -> {
@@ -495,10 +618,9 @@ public class TabController {
                 // Save ReAct analysis with proper chunking to database
                 // Pass the FULL chronological history, not just summaries
                 queryService.saveReActAnalysis(
-                    query,
-                    historyContainer[0].toString(),  // Full investigation details
-                    result.getAnswer()
-                );
+                        query,
+                        historyContainer[0].toString(), // Full investigation details
+                        result.getAnswer());
 
                 // Show in UI - display the full chronological history
                 String html = markdownHelper.markdownToHtml(historyContainer[0].toString());
@@ -523,16 +645,14 @@ public class TabController {
                     // Determine if this was a cancellation or error
                     boolean isCancellation = errorMsg.toLowerCase().contains("cancel");
 
-                    String suffix = isCancellation ?
-                        "\n\n---\n\n**[Analysis cancelled by user]**" :
-                        "\n\n---\n\n**[Analysis failed: " + errorMsg + "]**";
+                    String suffix = isCancellation ? "\n\n---\n\n**[Analysis cancelled by user]**"
+                            : "\n\n---\n\n**[Analysis failed: " + errorMsg + "]**";
 
                     // Save the partial investigation to database
                     queryService.saveReActAnalysis(
-                        query,
-                        partialHistory + suffix,
-                        isCancellation ? "[Cancelled]" : "[Error: " + errorMsg + "]"
-                    );
+                            query,
+                            partialHistory + suffix,
+                            isCancellation ? "[Cancelled]" : "[Error: " + errorMsg + "]");
 
                     // Show partial progress in UI
                     String html = markdownHelper.markdownToHtml(partialHistory + suffix);
@@ -544,7 +664,7 @@ public class TabController {
 
                 if (!errorMsg.toLowerCase().contains("cancel")) {
                     Msg.showError(getClass(), queryTab, "Agentic Analysis Error",
-                        "Analysis failed: " + errorMsg);
+                            "Analysis failed: " + errorMsg);
                 }
 
                 // Clear the orchestrator reference
@@ -556,13 +676,13 @@ public class TabController {
     }
 
     // ==== Action Analysis Operations ====
-    
+
     public void handleAnalyzeFunction(Map<String, JCheckBox> filterCheckBoxes) {
         // Refresh MCP state before analyzing
         if (queryTab != null) {
             queryTab.refreshMCPState();
         }
-        
+
         if (isQueryRunning) {
             cancelCurrentOperation();
             return;
@@ -575,28 +695,28 @@ public class TabController {
                 selectedActions.add(entry.getKey());
             }
         }
-        
+
         if (selectedActions.isEmpty()) {
-            Msg.showInfo(getClass(), actionsTab, "No Actions Selected", 
-                "Please select at least one analysis type.");
+            Msg.showInfo(getClass(), actionsTab, "No Actions Selected",
+                    "Please select at least one analysis type.");
             return;
         }
-        
+
         Function currentFunction = plugin.getCurrentFunction();
         if (currentFunction == null) {
-            Msg.showInfo(getClass(), actionsTab, "No Function", 
-                "No function at current location.");
+            Msg.showInfo(getClass(), actionsTab, "No Function",
+                    "No function at current location.");
             return;
         }
-        
+
         setUIState(true, "Stop", null);
-        
+
         try {
-            ActionAnalysisService.ActionAnalysisRequest request = 
-                actionAnalysisService.createAnalysisRequest(currentFunction, selectedActions);
-            
+            ActionAnalysisService.ActionAnalysisRequest request = actionAnalysisService
+                    .createAnalysisRequest(currentFunction, selectedActions);
+
             actionAnalysisService.executeActionAnalysis(request, createActionAnalysisHandler());
-            
+
         } catch (Exception e) {
             Msg.showError(this, actionsTab, "Error", e.getMessage());
             setUIState(false, "Analyze Function", null);
@@ -697,8 +817,7 @@ public class TabController {
             ragManagementTab.updateStats(
                     stats.getTotalFiles(),
                     stats.getTotalChunks(),
-                    stats.getTotalEmbeddings()
-            );
+                    stats.getTotalEmbeddings());
         } catch (Exception ex) {
             Msg.showError(this, ragManagementTab, "Error",
                     "Failed to load indexed files: " + ex.getMessage());
@@ -738,14 +857,14 @@ public class TabController {
     }
 
     // ==== Analysis Data Operations ====
-    
+
     public void handleContextSave(String context) {
         try {
             analysisDataService.saveContext(context);
             Msg.showInfo(this, analysisOptionsTab, "Success", "Context saved successfully.");
         } catch (Exception e) {
-            Msg.showError(this, analysisOptionsTab, "Error", 
-                "Failed to save context: " + e.getMessage());
+            Msg.showError(this, analysisOptionsTab, "Error",
+                    "Failed to save context: " + e.getMessage());
         }
     }
 
@@ -758,7 +877,7 @@ public class TabController {
             analysisOptionsTab.loadMaxToolCalls();
         } catch (Exception e) {
             Msg.showError(this, analysisOptionsTab, "Error",
-                "Failed to load context: " + e.getMessage());
+                    "Failed to load context: " + e.getMessage());
         }
     }
 
@@ -767,13 +886,13 @@ public class TabController {
             String defaultContext = analysisDataService.revertToDefaultContext();
             analysisOptionsTab.setContextText(defaultContext);
         } catch (Exception e) {
-            Msg.showError(this, analysisOptionsTab, "Error", 
-                "Failed to revert context: " + e.getMessage());
+            Msg.showError(this, analysisOptionsTab, "Error",
+                    "Failed to revert context: " + e.getMessage());
         }
     }
 
     // ==== Feedback Operations ====
-    
+
     public void handleHyperlinkEvent(HyperlinkEvent e) {
         if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
             String desc = e.getDescription();
@@ -792,18 +911,28 @@ public class TabController {
     }
 
     // ==== Location Updates ====
-    
+
     public void handleLocationUpdate(ProgramLocation loc) {
         if (loc != null && loc.getAddress() != null) {
             explainTab.updateOffset(loc.getAddress().toString());
             updateAnalysisDisplay();
+
+            // Update improved decompilation tab
+            try {
+                String programHash = plugin.getCurrentProgram().getExecutableSHA256();
+                BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(programHash);
+                KnowledgeNode node = graph.getNodeByAddress(loc.getAddress().getOffset());
+                updateImprovedDecompilationDisplay(node);
+            } catch (Exception e) {
+                // Ignore errors during location update
+            }
         }
     }
 
     public void updateAnalysis(ProgramLocation loc) {
         updateAnalysisDisplay();
     }
-    
+
     public void handleUpdateAnalysis(String updatedContent) {
         Function function = plugin.getCurrentFunction();
         if (function == null) {
@@ -817,12 +946,12 @@ public class TabController {
 
             if (node == null) {
                 Msg.showWarn(this, explainTab, "Not Indexed",
-                    "Function not indexed. Run 'Explain Function' first.");
+                        "Function not indexed. Run 'Explain Function' first.");
                 return;
             }
 
             node.setLlmSummary(updatedContent);
-            node.setUserEdited(true);  // Protect from auto-overwrite
+            node.setUserEdited(true); // Protect from auto-overwrite
             node.markUpdated();
             graph.upsertNode(node);
         } catch (Exception e) {
@@ -856,13 +985,13 @@ public class TabController {
     }
 
     // ==== State Management ====
-    
+
     public void clearConversationHistory() {
         queryService.clearConversationHistory();
     }
-    
+
     // ==== Chat History Management ====
-    
+
     public void handleNewChatSession() {
         // Cancel any running operation and render task first
         if (isQueryRunning) {
@@ -875,7 +1004,7 @@ public class TabController {
             queryService.clearConversationHistory();
             queryTab.setResponseText("");
             queryTab.clearChatSelection();
-            
+
             // Create new session immediately instead of waiting for first query
             int newSessionId = queryService.createNewChatSession();
             if (newSessionId != -1) {
@@ -891,7 +1020,7 @@ public class TabController {
             }
         });
     }
-    
+
     public void handleDeleteCurrentSession() {
         // Cancel any running operation and render task first
         if (isQueryRunning) {
@@ -935,13 +1064,13 @@ public class TabController {
             }
         });
     }
-    
+
     public void handleChatSessionSelection(int rowIndex) {
         java.util.List<ghidrassist.AnalysisDB.ChatSession> sessions = queryService.getChatSessions();
         if (rowIndex >= 0 && rowIndex < sessions.size()) {
             ghidrassist.AnalysisDB.ChatSession selectedSession = sessions.get(rowIndex);
             boolean success = queryService.switchToChatSession(selectedSession.getId());
-            
+
             if (success) {
                 SwingUtilities.invokeLater(() -> {
                     String html = markdownHelper.markdownToHtml(queryService.getConversationHistory());
@@ -950,7 +1079,7 @@ public class TabController {
             }
         }
     }
-    
+
     public void handleChatDescriptionUpdate(int rowIndex, String newDescription) {
         java.util.List<ghidrassist.AnalysisDB.ChatSession> sessions = queryService.getChatSessions();
         if (rowIndex >= 0 && rowIndex < sessions.size()) {
@@ -958,7 +1087,7 @@ public class TabController {
             queryService.updateChatDescription(session.getId(), newDescription);
         }
     }
-    
+
     public void refreshChatHistory() {
         if (queryTab != null) {
             java.util.List<ghidrassist.AnalysisDB.ChatSession> sessions = queryService.getChatSessions();
@@ -998,8 +1127,8 @@ public class TabController {
         for (int i = 0; i < Math.min(3, messages.size()); i++) {
             PersistedChatMessage msg = messages.get(i);
             Msg.info(this, String.format("  Message[%d]: role=%s, order=%d, content=%s",
-                i, msg.getRole(), msg.getOrder(),
-                msg.getContent().substring(0, Math.min(50, msg.getContent().length()))));
+                    i, msg.getRole(), msg.getOrder(),
+                    msg.getContent().substring(0, Math.min(50, msg.getContent().length()))));
         }
 
         if (messages.isEmpty()) {
@@ -1040,7 +1169,8 @@ public class TabController {
         }
 
         String programHash = getProgramHash();
-        Msg.info(this, "Edit Save: programHash=" + (programHash != null ? programHash.substring(0, 8) + "..." : "null"));
+        Msg.info(this,
+                "Edit Save: programHash=" + (programHash != null ? programHash.substring(0, 8) + "..." : "null"));
         if (programHash == null) {
             return;
         }
@@ -1058,8 +1188,7 @@ public class TabController {
         } else {
             // No changes detected - still save all messages as a full rebuild
             Msg.info(this, "Edit Save: no changes detected, performing full rebuild anyway");
-            List<ChatEditManager.ExtractedMessage> finalMessages =
-                    chatEditManager.extractAllMessages(editedContent);
+            List<ChatEditManager.ExtractedMessage> finalMessages = chatEditManager.extractAllMessages(editedContent);
             Msg.info(this, "Edit Save: extracted " + finalMessages.size() + " messages for rebuild");
 
             if (!finalMessages.isEmpty()) {
@@ -1070,8 +1199,7 @@ public class TabController {
 
                     PersistedChatMessage persistedMsg = new PersistedChatMessage(
                             null, msg.role, msg.content,
-                            new Timestamp(System.currentTimeMillis()), i
-                    );
+                            new Timestamp(System.currentTimeMillis()), i);
                     persistedMsg.setProviderType("edited");
                     persistedMsg.setMessageType("edited");
                     newMessageList.add(persistedMsg);
@@ -1087,7 +1215,7 @@ public class TabController {
      * Apply detected changes to the database
      */
     private void applyChanges(String programHash, int chatId,
-                              List<ChatChange> changes, String editedContent) {
+            List<ChatChange> changes, String editedContent) {
         boolean messagesUpdated = false;
         boolean titleUpdated = false;
         String newTitle = null;
@@ -1102,15 +1230,14 @@ public class TabController {
                     messagesUpdated = true;
                 }
             } else if (change.getChangeType() == ChangeType.DELETED ||
-                       change.getChangeType() == ChangeType.ADDED) {
+                    change.getChangeType() == ChangeType.ADDED) {
                 messagesUpdated = true;
             }
         }
 
         // Full rebuild from scratch
         if (messagesUpdated) {
-            List<ChatEditManager.ExtractedMessage> finalMessages =
-                    chatEditManager.extractAllMessages(editedContent);
+            List<ChatEditManager.ExtractedMessage> finalMessages = chatEditManager.extractAllMessages(editedContent);
 
             // Build new message list
             List<PersistedChatMessage> newMessageList = new ArrayList<>();
@@ -1119,8 +1246,7 @@ public class TabController {
 
                 PersistedChatMessage persistedMsg = new PersistedChatMessage(
                         null, msg.role, msg.content,
-                        new Timestamp(System.currentTimeMillis()), i
-                );
+                        new Timestamp(System.currentTimeMillis()), i);
                 persistedMsg.setProviderType("edited");
                 persistedMsg.setMessageType("edited");
                 newMessageList.add(persistedMsg);
@@ -1168,8 +1294,8 @@ public class TabController {
         if (epochMs == null || epochMs <= 0) {
             return "unknown";
         }
-        DateTimeFormatter formatter =
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(ZoneId.systemDefault());
         return formatter.format(Instant.ofEpochMilli(epochMs));
     }
 
@@ -1182,7 +1308,7 @@ public class TabController {
     }
 
     // ==== Private Helper Methods ====
-    
+
     private LlmApi getCurrentLlmApi() throws Exception {
         APIProviderConfig config = GhidrAssistPlugin.getCurrentProviderConfig();
         if (config == null) {
@@ -1192,7 +1318,7 @@ public class TabController {
         // Debug: Log current in-memory config before creating API
         if (currentReasoningConfig != null) {
             Msg.info(this, "DEBUG: In-memory reasoning config before create: " +
-                currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
+                    currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
         } else {
             Msg.info(this, "DEBUG: In-memory reasoning config is NULL");
         }
@@ -1205,7 +1331,8 @@ public class TabController {
             String savedEffort = analysisDataService.getReasoningEffort();
             Msg.info(this, "DEBUG: Database returned reasoning effort: " + savedEffort);
             // Only override in-memory config if we have a saved non-none value
-            // Otherwise keep the current in-memory setting (e.g., when no program is loaded)
+            // Otherwise keep the current in-memory setting (e.g., when no program is
+            // loaded)
             if (savedEffort != null && !savedEffort.equalsIgnoreCase("none")) {
                 currentReasoningConfig = ReasoningConfig.fromString(savedEffort);
                 Msg.info(this, "DEBUG: Loaded from DB, new config: " + currentReasoningConfig.getEffort());
@@ -1217,10 +1344,11 @@ public class TabController {
             Msg.info(this, "DEBUG: Database load failed: " + e.getMessage());
         }
 
-        // Always set reasoning config (even if NONE) to ensure provider has correct state
+        // Always set reasoning config (even if NONE) to ensure provider has correct
+        // state
         if (currentReasoningConfig != null) {
             Msg.info(this, "DEBUG: Setting reasoning config on LlmApi: " +
-                currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
+                    currentReasoningConfig.getEffort() + ", enabled=" + currentReasoningConfig.isEnabled());
             currentLlmApi.setReasoningConfig(currentReasoningConfig);
         } else {
             Msg.info(this, "DEBUG: currentReasoningConfig is NULL, setting default NONE");
@@ -1230,11 +1358,11 @@ public class TabController {
         // Verify it was set
         ReasoningConfig verifyConfig = currentLlmApi.getReasoningConfig();
         Msg.info(this, "DEBUG: Verified LlmApi config after set: " +
-            verifyConfig.getEffort() + ", enabled=" + verifyConfig.isEnabled());
+                verifyConfig.getEffort() + ", enabled=" + verifyConfig.isEnabled());
 
         return currentLlmApi;
     }
-    
+
     private void cancelCurrentOperation() {
         // Mark that we're cancelling to prevent concurrent operations
         isCancelling = true;
@@ -1278,7 +1406,7 @@ public class TabController {
             }
         }, 5, TimeUnit.SECONDS);
     }
-    
+
     /**
      * Cancel the active render task to prevent stale UI updates.
      * Should be called when cancelling, starting new queries, or clearing state.
@@ -1315,12 +1443,15 @@ public class TabController {
             }
         });
     }
-    
+
     private void updateAnalysisDisplay() {
         Function function = plugin.getCurrentFunction();
         if (function == null) {
             explainTab.setExplanationText("");
             explainTab.clearSecurityInfo();
+            if (improvedDecompilationTab != null) {
+                improvedDecompilationTab.setCodeText("");
+            }
             return;
         }
 
@@ -1330,40 +1461,42 @@ public class TabController {
             KnowledgeNode node = graph.getNodeByAddress(function.getEntryPoint().getOffset());
 
             updateExplainDisplay(node);
+            updateImprovedDecompilationDisplay(node);
         } catch (Exception e) {
             // Fall back to empty display on error
             explainTab.setExplanationText("");
             explainTab.clearSecurityInfo();
+            if (improvedDecompilationTab != null) {
+                improvedDecompilationTab.setCodeText("");
+            }
         }
     }
-    
+
     private JFileChooser createDocumentFileChooser() {
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.setDialogTitle("Select Documents to Add to RAG");
         fileChooser.setMultiSelectionEnabled(true);
         fileChooser.addChoosableFileFilter(
-            new javax.swing.filechooser.FileNameExtensionFilter(
-                "Text and Markdown Files", "txt", "md"));
+                new javax.swing.filechooser.FileNameExtensionFilter(
+                        "Text and Markdown Files", "txt", "md"));
         fileChooser.addChoosableFileFilter(
-            new javax.swing.filechooser.FileNameExtensionFilter(
-                "Source Code", "c", "h", "cpp", "hpp", "py", "java", "rs", "asm"));
+                new javax.swing.filechooser.FileNameExtensionFilter(
+                        "Source Code", "c", "h", "cpp", "hpp", "py", "java", "rs", "asm"));
         return fileChooser;
     }
-    
+
     // ==== Response Handler Factories ====
-    
+
     private LlmApi.LlmResponseHandler createExplainResponseHandler() {
         return new LlmApi.LlmResponseHandler() {
             @Override
             public void onStart() {
-                SwingUtilities.invokeLater(() -> 
-                    explainTab.setExplanationText("Processing..."));
+                SwingUtilities.invokeLater(() -> explainTab.setExplanationText("Processing..."));
             }
 
             @Override
             public void onUpdate(String partialResponse) {
-                SwingUtilities.invokeLater(() -> 
-                    explainTab.setExplanationText(
+                SwingUtilities.invokeLater(() -> explainTab.setExplanationText(
                         markdownHelper.markdownToHtml(partialResponse)));
             }
 
@@ -1372,7 +1505,7 @@ public class TabController {
                 SwingUtilities.invokeLater(() -> {
                     feedbackService.cacheLastInteraction(feedbackService.getLastPrompt(), fullResponse);
                     explainTab.setExplanationText(
-                        markdownHelper.markdownToHtml(fullResponse));
+                            markdownHelper.markdownToHtml(fullResponse));
                     setUIState(false, "Explain Line", null);
                 });
             }
@@ -1391,7 +1524,7 @@ public class TabController {
             }
         };
     }
-    
+
     private LlmApi.LlmResponseHandler createConversationHandler() {
         return new LlmApi.LlmResponseHandler() {
             private final StringBuilder responseBuffer = new StringBuilder();
@@ -1414,11 +1547,10 @@ public class TabController {
                 // Start periodic markdown rendering using class-level tracking
                 synchronized (renderLock) {
                     activeRenderTask = updateScheduler.scheduleAtFixedRate(
-                        this::renderCurrentContent,
-                        RENDER_INTERVAL_MS,
-                        RENDER_INTERVAL_MS,
-                        TimeUnit.MILLISECONDS
-                    );
+                            this::renderCurrentContent,
+                            RENDER_INTERVAL_MS,
+                            RENDER_INTERVAL_MS,
+                            TimeUnit.MILLISECONDS);
                 }
             }
 
@@ -1455,7 +1587,7 @@ public class TabController {
                         return;
                     }
                     content = queryService.getConversationHistory() +
-                        "**Assistant**:\n" + responseBuffer.toString();
+                            "**Assistant**:\n" + responseBuffer.toString();
                 }
 
                 SwingUtilities.invokeLater(() -> {
@@ -1508,7 +1640,7 @@ public class TabController {
                         SwingUtilities.invokeLater(() -> {
                             // Save partial response as assistant message before the error
                             queryService.addAssistantMessage(partialResponse + "\n\n[Incomplete - Error occurred]",
-                                queryService.getCurrentProviderType(), null);
+                                    queryService.getCurrentProviderType(), null);
                         });
                     }
                 }
@@ -1548,7 +1680,7 @@ public class TabController {
 
                             // Save partial response
                             queryService.addAssistantMessage(partialResponse + "\n\n[Cancelled by user]",
-                                queryService.getCurrentProviderType(), null);
+                                    queryService.getCurrentProviderType(), null);
 
                             // Update UI with saved content
                             String html = markdownHelper.markdownToHtml(queryService.getConversationHistory());
@@ -1563,15 +1695,17 @@ public class TabController {
             }
         };
     }
-    
-    private ghidrassist.agent.react.ReActProgressHandler createReActProgressHandler(final StringBuilder[] historyContainer) {
+
+    private ghidrassist.agent.react.ReActProgressHandler createReActProgressHandler(
+            final StringBuilder[] historyContainer) {
         return new ghidrassist.agent.react.ReActProgressHandler() {
-            private final StringBuilder chronologicalHistory = new StringBuilder();  // Single sequential history
-            private final Object historyLock = new Object();  // Protect concurrent access
+            private final StringBuilder chronologicalHistory = new StringBuilder(); // Single sequential history
+            private final Object historyLock = new Object(); // Protect concurrent access
             private String currentIterationOutput = "";
-            private final StringBuilder synthesisBuffer = new StringBuilder();  // Separate buffer for synthesis streaming
+            private final StringBuilder synthesisBuffer = new StringBuilder(); // Separate buffer for synthesis
+                                                                               // streaming
             private boolean synthesisStarted = false;
-            private int lastIterationSeen = -1;  // Start at -1 so iteration 0 triggers header
+            private int lastIterationSeen = -1; // Start at -1 so iteration 0 triggers header
 
             @Override
             public void onStart(String objective) {
@@ -1595,11 +1729,10 @@ public class TabController {
                 // Start periodic markdown rendering using class-level tracking
                 synchronized (renderLock) {
                     activeRenderTask = updateScheduler.scheduleAtFixedRate(
-                        this::renderCurrentContent,
-                        RENDER_INTERVAL_MS,
-                        RENDER_INTERVAL_MS,
-                        TimeUnit.MILLISECONDS
-                    );
+                            this::renderCurrentContent,
+                            RENDER_INTERVAL_MS,
+                            RENDER_INTERVAL_MS,
+                            TimeUnit.MILLISECONDS);
                 }
             }
 
@@ -1661,7 +1794,8 @@ public class TabController {
 
                     // Add completion metadata
                     chronologicalHistory.append("---\n\n");
-                    chronologicalHistory.append("**Status**: ").append(result.isSuccess() ? "✓ Complete" : result.getStatus()).append("\n");
+                    chronologicalHistory.append("**Status**: ")
+                            .append(result.isSuccess() ? "✓ Complete" : result.getStatus()).append("\n");
                     chronologicalHistory.append("**Iterations**: ").append(result.getIterationCount()).append("\n");
                     chronologicalHistory.append("**Tool Calls**: ").append(result.getToolCallCount()).append("\n");
                     if (result.getDuration() != null) {
@@ -1810,7 +1944,7 @@ public class TabController {
                         actionAnalysisService.parseAndDisplayActions(response, actionsTab.getTableModel());
                     } catch (Exception e) {
                         Msg.showError(this, actionsTab, "Error",
-                            "Failed to parse actions: " + e.getMessage());
+                                "Failed to parse actions: " + e.getMessage());
                     }
                 });
             }
@@ -1818,8 +1952,8 @@ public class TabController {
             @Override
             public void onActionError(String action, Throwable error) {
                 SwingUtilities.invokeLater(() -> {
-                    Msg.showError(this, actionsTab, "Error", 
-                        "Action " + action + " failed: " + error.getMessage());
+                    Msg.showError(this, actionsTab, "Error",
+                            "Action " + action + " failed: " + error.getMessage());
                 });
             }
 
@@ -1836,7 +1970,7 @@ public class TabController {
             }
         };
     }
-    
+
     // ==== Semantic Graph Tab Handlers ====
 
     /**
@@ -1877,7 +2011,7 @@ public class TabController {
                 ghidra.program.model.listing.FunctionManager fm = plugin.getCurrentProgram().getFunctionManager();
                 for (Function func : fm.getFunctions(true)) {
                     if (func.getName().equalsIgnoreCase(text) ||
-                        text.contains(func.getName())) {
+                            text.contains(func.getName())) {
                         address = func.getEntryPoint().getOffset();
                         break;
                     }
@@ -1926,12 +2060,12 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("Reset Graph", true, true, true) {
+        Task task = new Task("Reset Graph", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.clearGraph(plugin.getCurrentProgram());
 
                     SwingUtilities.invokeLater(() -> {
@@ -1944,7 +2078,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -1956,12 +2090,12 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("ReIndex Binary", true, true, true) {
+        Task task = new Task("ReIndex Binary", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Clear existing graph data before reindexing
@@ -1969,8 +2103,8 @@ public class TabController {
                     service.clearGraph(plugin.getCurrentProgram());
 
                     monitor.setMessage("Indexing binary structure...");
-                    ghidrassist.graphrag.extraction.StructureExtractor.ExtractionResult result =
-                            service.indexStructureSync(plugin.getCurrentProgram(), monitor, false);
+                    ghidrassist.graphrag.extraction.StructureExtractor.ExtractionResult result = service
+                            .indexStructureSync(plugin.getCurrentProgram(), monitor, false);
 
                     // Invalidate cache so UI gets a fresh graph instance that loads from DB
                     analysisDB.invalidateKnowledgeGraphCache(
@@ -1987,8 +2121,7 @@ public class TabController {
                                 result.functionsExtracted,
                                 result.callEdgesCreated,
                                 0,
-                                formatIndexedTimestamp(lastIndexed)
-                        );
+                                formatIndexedTimestamp(lastIndexed));
                         Msg.showInfo(this, null, "Indexing Complete",
                                 String.format("Indexed %d functions, %d edges",
                                         result.functionsExtracted, result.callEdgesCreated));
@@ -1998,7 +2131,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -2009,13 +2142,13 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("Refresh Names", true, true, true) {
+        Task task = new Task("Refresh Names", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
                     // Use the ga_refresh_names tool via SemanticQueryTools
-                    ghidrassist.graphrag.query.SemanticQueryTools tools =
-                            new ghidrassist.graphrag.query.SemanticQueryTools(analysisDB);
+                    ghidrassist.graphrag.query.SemanticQueryTools tools = new ghidrassist.graphrag.query.SemanticQueryTools(
+                            analysisDB);
                     tools.setCurrentProgram(plugin.getCurrentProgram());
 
                     com.google.gson.JsonObject args = new com.google.gson.JsonObject();
@@ -2030,7 +2163,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -2042,12 +2175,12 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("Semantic Analysis", true, true, true) {
+        Task task = new Task("Semantic Analysis", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Check if LLM provider is configured
@@ -2062,8 +2195,8 @@ public class TabController {
                     monitor.setMessage("Running semantic analysis...");
 
                     // Run semantic extraction with progress callback
-                    ghidrassist.graphrag.extraction.SemanticExtractor.ExtractionResult result =
-                            service.summarizeStaleNodes(plugin.getCurrentProgram(), 0,
+                    ghidrassist.graphrag.extraction.SemanticExtractor.ExtractionResult result = service
+                            .summarizeStaleNodes(plugin.getCurrentProgram(), 0,
                                     (processed, total, summarized, errors) -> {
                                         monitor.setProgress(processed);
                                         monitor.setMaximum(total);
@@ -2091,7 +2224,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -2103,13 +2236,12 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("Security Analysis", true, true, true) {
+        Task task = new Task("Security Analysis", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
                     String programHash = plugin.getCurrentProgram().getExecutableSHA256();
-                    ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                            analysisDB.getKnowledgeGraph(programHash);
+                    ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB.getKnowledgeGraph(programHash);
 
                     if (graph == null) {
                         SwingUtilities.invokeLater(() -> {
@@ -2123,12 +2255,12 @@ public class TabController {
                     monitor.setIndeterminate(true);
 
                     // Run taint analysis with edge creation
-                    ghidrassist.graphrag.analysis.TaintAnalyzer taintAnalyzer =
-                            new ghidrassist.graphrag.analysis.TaintAnalyzer(graph);
+                    ghidrassist.graphrag.analysis.TaintAnalyzer taintAnalyzer = new ghidrassist.graphrag.analysis.TaintAnalyzer(
+                            graph);
 
                     // Find taint paths and create TAINT_FLOWS_TO edges
-                    java.util.List<ghidrassist.graphrag.analysis.TaintAnalyzer.TaintPath> taintPaths =
-                            taintAnalyzer.findTaintPaths(100, true); // max 100 paths, create edges
+                    java.util.List<ghidrassist.graphrag.analysis.TaintAnalyzer.TaintPath> taintPaths = taintAnalyzer
+                            .findTaintPaths(100, true); // max 100 paths, create edges
 
                     monitor.setMessage("Creating VULNERABLE_VIA edges...");
 
@@ -2152,7 +2284,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -2163,7 +2295,7 @@ public class TabController {
             return;
         }
 
-        Task task = new Task("Index Function", true, true, true) {
+        Task task = new Task("Index Function", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
@@ -2177,16 +2309,15 @@ public class TabController {
                         return;
                     }
 
-                    ghidrassist.graphrag.GraphRAGService service =
-                            ghidrassist.graphrag.GraphRAGService.getInstance(analysisDB);
+                    ghidrassist.graphrag.GraphRAGService service = ghidrassist.graphrag.GraphRAGService
+                            .getInstance(analysisDB);
                     service.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Index just this function
-                    ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                            analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
-                    ghidrassist.graphrag.extraction.StructureExtractor extractor =
-                            new ghidrassist.graphrag.extraction.StructureExtractor(
-                                    plugin.getCurrentProgram(), graph, monitor);
+                    ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                            .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                    ghidrassist.graphrag.extraction.StructureExtractor extractor = new ghidrassist.graphrag.extraction.StructureExtractor(
+                            plugin.getCurrentProgram(), graph, monitor);
                     try {
                         extractor.extractFunction(function);
                     } finally {
@@ -2203,7 +2334,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**
@@ -2218,8 +2349,8 @@ public class TabController {
 
         SwingUtilities.invokeLater(() -> {
             try {
-                ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                        analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                        .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
 
                 ghidrassist.graphrag.nodes.KnowledgeNode node = graph.getNodeByAddress(address);
 
@@ -2234,8 +2365,10 @@ public class TabController {
                 // Get callers and callees
                 java.util.List<ghidrassist.graphrag.nodes.KnowledgeNode> callers = graph.getCallers(node.getId());
                 java.util.List<ghidrassist.graphrag.nodes.KnowledgeNode> callees = graph.getCallees(node.getId());
-                java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> outgoing = graph.getOutgoingEdges(node.getId());
-                java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> incoming = graph.getIncomingEdges(node.getId());
+                java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> outgoing = graph
+                        .getOutgoingEdges(node.getId());
+                java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> incoming = graph
+                        .getIncomingEdges(node.getId());
 
                 // Combine all edges
                 java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> allEdges = new java.util.ArrayList<>();
@@ -2279,8 +2412,8 @@ public class TabController {
 
         SwingUtilities.invokeLater(() -> {
             try {
-                ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                        analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+                ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                        .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
 
                 ghidrassist.graphrag.nodes.KnowledgeNode centerNode = graph.getNodeByAddress(address);
 
@@ -2292,8 +2425,8 @@ public class TabController {
                 graphView.showContent();
 
                 // Get N-hop neighborhood
-                java.util.List<ghidrassist.graphrag.nodes.KnowledgeNode> neighbors =
-                        graph.getNeighbors(centerNode.getId(), nHops);
+                java.util.List<ghidrassist.graphrag.nodes.KnowledgeNode> neighbors = graph
+                        .getNeighbors(centerNode.getId(), nHops);
 
                 // Include center node in the list
                 java.util.List<ghidrassist.graphrag.nodes.KnowledgeNode> allNodes = new java.util.ArrayList<>();
@@ -2308,7 +2441,8 @@ public class TabController {
 
                 java.util.List<ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge> allEdges = new java.util.ArrayList<>();
                 for (ghidrassist.graphrag.nodes.KnowledgeNode node : allNodes) {
-                    for (ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge edge : graph.getOutgoingEdges(node.getId())) {
+                    for (ghidrassist.graphrag.BinaryKnowledgeGraph.GraphEdge edge : graph
+                            .getOutgoingEdges(node.getId())) {
                         if (nodeIds.contains(edge.getTargetId()) && edgeTypes.contains(edge.getType())) {
                             allEdges.add(edge);
                         }
@@ -2333,8 +2467,8 @@ public class TabController {
         }
 
         try {
-            ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                    .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             ghidrassist.graphrag.nodes.KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -2355,8 +2489,8 @@ public class TabController {
         }
 
         try {
-            ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                    .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             ghidrassist.graphrag.nodes.KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -2379,8 +2513,8 @@ public class TabController {
         }
 
         try {
-            ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                    .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             ghidrassist.graphrag.nodes.KnowledgeNode node = graph.getNodeByAddress(address);
 
             if (node != null) {
@@ -2402,8 +2536,8 @@ public class TabController {
         }
 
         try {
-            ghidrassist.graphrag.BinaryKnowledgeGraph graph =
-                    analysisDB.getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
+            ghidrassist.graphrag.BinaryKnowledgeGraph graph = analysisDB
+                    .getKnowledgeGraph(plugin.getCurrentProgram().getExecutableSHA256());
             ghidrassist.graphrag.nodes.KnowledgeNode node = graph.getNode(targetId);
 
             if (node != null) {
@@ -2418,26 +2552,26 @@ public class TabController {
      * Handle semantic graph search query.
      * Executes a semantic query tool and returns the result via callback.
      *
-     * @param queryType The tool name (e.g., "ga_search_semantic")
-     * @param args The query arguments as JsonObject
+     * @param queryType      The tool name (e.g., "ga_search_semantic")
+     * @param args           The query arguments as JsonObject
      * @param resultCallback Callback to receive the JSON result string
      */
     public void handleSemanticGraphSearchQuery(String queryType, com.google.gson.JsonObject args,
-                                                java.util.function.Consumer<String> resultCallback) {
+            java.util.function.Consumer<String> resultCallback) {
         if (plugin.getCurrentProgram() == null) {
             resultCallback.accept("{\"error\": \"No program loaded\"}");
             return;
         }
 
-        Task task = new Task("Semantic Query", true, true, true) {
+        Task task = new Task("Semantic Query", true, true, false) {
             @Override
             public void run(TaskMonitor monitor) throws ghidra.util.exception.CancelledException {
                 try {
                     monitor.setMessage("Executing " + queryType + "...");
 
                     // Create query tools instance
-                    ghidrassist.graphrag.query.SemanticQueryTools tools =
-                            new ghidrassist.graphrag.query.SemanticQueryTools(analysisDB);
+                    ghidrassist.graphrag.query.SemanticQueryTools tools = new ghidrassist.graphrag.query.SemanticQueryTools(
+                            analysisDB);
                     tools.setCurrentProgram(plugin.getCurrentProgram());
 
                     // Execute the query
@@ -2460,7 +2594,7 @@ public class TabController {
                 }
             }
         };
-        TaskLauncher.launch(task);
+        plugin.getTool().execute(task);
     }
 
     /**

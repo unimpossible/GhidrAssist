@@ -72,7 +72,7 @@ public class SemanticExtractor {
     /**
      * Process all stale nodes that need summarization.
      *
-     * @param limit Maximum number of nodes to process (0 = unlimited)
+     * @param limit            Maximum number of nodes to process (0 = unlimited)
      * @param progressCallback Optional callback for progress updates
      * @return ExtractionResult with statistics
      */
@@ -154,6 +154,37 @@ public class SemanticExtractor {
     }
 
     /**
+     * Improve decompilation for a node on-demand.
+     */
+    public boolean improveDecompilation(KnowledgeNode node) {
+        if (node == null || node.getRawContent() == null || node.getRawContent().isEmpty()) {
+            return false;
+        }
+
+        try {
+            String prompt = "Rewrite the following decompiled C/C++ function to be more readable. " +
+                    "Use meaningful variable names, improved structure, and comments where appropriate. " +
+                    "Do NOT change the logic or semantics. " +
+                    "Return ONLY the improved code block.\n\n" +
+                    node.getRawContent();
+
+            String response = callLLM(prompt);
+            if (response != null && !response.isEmpty()) {
+                // Strip markdown code blocks if present (generic)
+                String cleanCode = response.replaceAll("```[a-zA-Z]*", "").replace("```", "").trim();
+
+                node.setImprovedDecompilation(cleanCode);
+                node.markUpdated();
+                graph.upsertNode(node);
+                return true;
+            }
+        } catch (Exception e) {
+            Msg.error(this, "Failed to improve decompilation for node " + node.getId() + ": " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
      * Cancel ongoing extraction.
      */
     public void cancel() {
@@ -181,7 +212,8 @@ public class SemanticExtractor {
 
         // Process other node types individually
         for (KnowledgeNode node : others) {
-            if (cancelled) break;
+            if (cancelled)
+                break;
             processOtherNode(node);
         }
     }
@@ -193,8 +225,7 @@ public class SemanticExtractor {
         List<KnowledgeNode> simpleFunctions = new ArrayList<>();
 
         for (KnowledgeNode func : functions) {
-            ExtractionPrompts.ComplexityMetrics complexity =
-                    ExtractionPrompts.analyzeComplexity(func.getRawContent());
+            ExtractionPrompts.ComplexityMetrics complexity = ExtractionPrompts.analyzeComplexity(func.getRawContent());
             if (complexity.level.equals("complex") || complexity.level.equals("very_complex")) {
                 complexFunctions.add(func);
             } else {
@@ -204,7 +235,8 @@ public class SemanticExtractor {
 
         // Process complex functions individually for detailed summaries
         for (KnowledgeNode func : complexFunctions) {
-            if (cancelled) break;
+            if (cancelled)
+                break;
             processSingleFunction(func);
         }
 
@@ -224,13 +256,15 @@ public class SemanticExtractor {
 
             // Fall back to individual processing for simple functions
             for (KnowledgeNode func : simpleFunctions) {
-                if (cancelled) break;
+                if (cancelled)
+                    break;
                 processSingleFunction(func);
             }
         } else {
             // Process remaining simple functions individually
             for (KnowledgeNode func : simpleFunctions) {
-                if (cancelled) break;
+                if (cancelled)
+                    break;
                 processSingleFunction(func);
             }
         }
@@ -254,8 +288,7 @@ public class SemanticExtractor {
                     node.getName() != null ? node.getName() : "unknown",
                     node.getRawContent(),
                     callers,
-                    callees
-            );
+                    callees);
 
             String response = callLLM(prompt);
             if (response != null) {
@@ -303,7 +336,8 @@ public class SemanticExtractor {
 
         for (String line : lines) {
             line = line.trim();
-            if (line.isEmpty()) continue;
+            if (line.isEmpty())
+                continue;
 
             // Match numbered lines like "1. Summary text" or "1) Summary text"
             if (line.matches("^\\d+[.)].*")) {
@@ -344,8 +378,7 @@ public class SemanticExtractor {
             case FUNCTION:
                 prompt = ExtractionPrompts.functionBriefSummaryPrompt(
                         node.getName() != null ? node.getName() : "unknown",
-                        node.getRawContent()
-                );
+                        node.getRawContent());
                 break;
             case BINARY:
                 prompt = "Summarize this binary in 2-3 sentences:\n\n" + node.getRawContent();
