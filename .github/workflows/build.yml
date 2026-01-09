@@ -1,0 +1,49 @@
+name: Build Ghidra Extension
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build_extension:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+      
+    - name: Download and Setup Ghidra
+      run: |
+        # Get the download URL for the latest Ghidra release
+        GHIDRA_ZIP_URL=$(curl -s https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest | jq -r ".assets[] | select(.name | endswith(\".zip\")) | .browser_download_url" | head -n 1)
+        
+        echo "Downloading Ghidra from: $GHIDRA_ZIP_URL"
+        wget -q -O ghidra.zip "$GHIDRA_ZIP_URL"
+        
+        echo "Extracting Ghidra..."
+        unzip -q ghidra.zip
+        
+        # Find the extracted directory name
+        GHIDRA_DIR=$(find . -maxdepth 1 -type d -name "ghidra_*" | head -n 1)
+        echo "Found Ghidra directory: $GHIDRA_DIR"
+        
+        # Set the environment variable for subsequent steps
+        echo "GHIDRA_INSTALL_DIR=$GITHUB_WORKSPACE/$GHIDRA_DIR" >> $GITHUB_ENV
+
+    - name: Build Extension
+      run: gradle buildExtension
+
+    - name: Upload Extension Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: GhidrAssist-Extension
+        path: dist/*.zip
+        if-no-files-found: error
